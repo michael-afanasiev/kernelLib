@@ -2,7 +2,13 @@
 
 int main () {
   
-  std::cout << "Hello world." << std::endl;
+  MPI::Init ();
+  
+  if (MPI::COMM_WORLD.Get_rank () == 0)
+    std::cout << rst << std::endl;
+  
   kernel kern ("./krn/betahKernelCrustMantle.nc");
+  
+  MPI::Finalize ();
 
 }
