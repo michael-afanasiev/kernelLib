@@ -29,6 +29,7 @@
 
 # NetCDF files
 *.nc
+*.ex2
 
 # Makefile
 *Makefile*

@@ -9,6 +9,7 @@
 
 // Global variables.
 static const float R_EARTH=6371.0;
+static const float ONE_DEG_RAD=1 * M_PI / 180.;
 // End global variables.
 
 // Colour codes for pretty writes.
@@ -23,6 +24,11 @@ static const char *blu = "\x1b[36m";
 // Utility functions.
 float rad2deg        (float);
 float deg2rad        (float);
+float projWonV_Dist (std::vector<float> &, std::vector<float> &, std::vector<float> &);
+float distFromPoint  (float &, float &, float &,
+                      float &, float &, float &);
+float oneDimDist     (float &, float &, float &,
+                      float &, float &, float &);
 
 bool checkRadius (float, float, float);
 bool checkTheta  (float, float, float);
@@ -35,6 +41,12 @@ void singlePrint (std::string);
 
 void writeExodus (float *regMeshArr, float *regX, float *regY, float *regZ, 
                   int &nx, int &ny, int &nz);
+                  
+std::vector<float> getNormalVector (std::vector<float> &A, 
+                                    std::vector<float> &B, 
+                                    std::vector<float> &C);
+                                    
+                                    
 // End utility functions.
 
 // Class definitions.
@@ -67,6 +79,11 @@ private:
   float *theta; // latitude.
   float *phi;   // longitude.
   
+  // Cartesian dimensions.
+  float *xStore;
+  float *yStore;
+  float *zStore;
+  
   // Spherical extremes;
   float radiusMin, thetaMin, phiMin;
   float radiusMax, thetaMax, phiMax;
@@ -83,6 +100,9 @@ private:
   // KDTree.
   int *KDdat;
   kdtree *tree;
+  
+  // Book keeping
+  bool *sideSet;
     
   // Internal functions.
   void openCoordNetcdf      ();
@@ -92,6 +112,8 @@ private:
   void rotateYaxis          ();
   void rotateXaxis          ();
   void createKDTree         ();
+  void exploreGaussianHaze  ();
+  void findSideSets         ();
     
 };
 
@@ -118,5 +140,8 @@ private:
   
   // Parameter.
   float *value;
+  
+  // In volume flag.
+  bool *chunk;
 
 };

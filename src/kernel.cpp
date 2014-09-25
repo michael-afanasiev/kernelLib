@@ -11,14 +11,21 @@ kernel::kernel (std::string fName) {
   openCoordNetcdf      ();
   openKernelNetcdf     ();
   
-  singlePrint ("Rotating chunks to z axis.");
+  // Ugly, but need to rotate to  z-axis to get haze boundaries.
+  findChunkDimensions ();  
+  rotateZaxis         ();
   findChunkDimensions ();
+  rotateYaxis         ();
+  findChunkDimensions ();
+  findSideSets        ();
+  
+  singlePrint ("Rotating chunks to z axis.");
   rotateZaxis         ();
   findChunkDimensions ();
   rotateYaxis         ();
   findChunkDimensions ();
     
-  singlePrint ("Creating KD-tree.");
+  singlePrint  ("Creating KD-tree.");
   createKDTree ();
   
   MPI::COMM_WORLD.Barrier ();
@@ -34,7 +41,154 @@ kernel::~kernel () {
   
 }
 
+void kernel::findSideSets () {
+  
+  // Find the sidesets of a mesh chunk -- that is the nodes close enough to an edge that might 
+  // require communicating.
+  
+  // Re-usable vectors for edges of chunk (for face plane).  
+  std::vector<float> A, B, C;
+  A.resize (3);
+  B.resize (3);
+  C.resize (3);
+
+  // Normal face plane vectors.
+  std::vector <float> n1, n2, n3, n4;  
+  n1.resize (3);
+  n2.resize (3);
+  n3.resize (3);
+  n4.resize (3);
+  
+  // Save edges of chunks for use to define plane later.
+  std::vector<float> p1, p2, p3, p4;
+  p1.resize (3);
+  p2.resize (3);
+  p3.resize (3);
+  p4.resize (3);
+  
+  // Face 1.
+  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, A[0], A[1], A[2]);
+  radThetaPhi2xyz (radiusMax, thetaMin, phiMax, B[0], B[1], B[2]);
+  radThetaPhi2xyz (radiusMin, thetaMax, phiMax, C[0], C[1], C[2]);  
+  n1 = getNormalVector (A, B, C);
+  p1 = A;
+
+  // Face 2.
+  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, A[0], A[1], A[2]);
+  radThetaPhi2xyz (radiusMax, thetaMax, phiMin, B[0], B[1], B[2]);
+  radThetaPhi2xyz (radiusMin, thetaMax, phiMax, C[0], C[1], C[2]);  
+  n2 = getNormalVector (A, B, C);
+  p2 = A;
+
+  // Face 3.
+  radThetaPhi2xyz (radiusMax, thetaMin, phiMax, A[0], A[1], A[2]);
+  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, B[0], B[1], B[2]);
+  radThetaPhi2xyz (radiusMin, thetaMin, phiMax, C[0], C[1], C[2]);  
+  n3 = getNormalVector (A, B, C);
+  p3 = A;
+
+  // Face 4.
+  radThetaPhi2xyz (radiusMax, thetaMax, phiMin, A[0], A[1], A[2]);
+  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, B[0], B[1], B[2]);
+  radThetaPhi2xyz (radiusMin, thetaMax, phiMin, C[0], C[1], C[2]);  
+  n4 = getNormalVector (A, B, C);
+  p4 = A;
+  
+  // Setup vector to test all GLL points -- face distance.
+  std::vector<float> xTest;
+  xTest.resize (3);
+  
+  // Loop over all points.
+  for (size_t i=0; i<numGLLPoints; i++) {
+    
+    xTest[0] = xStore[i];
+    xTest[1] = yStore[i];
+    xTest[2] = zStore[i];
+    
+    // Take dot product with face plane to get distance. Expand to physical dimensions.
+    float dFace1 = abs (projWonV_Dist (xTest, n1, p1) * R_EARTH);
+    float dFace2 = abs (projWonV_Dist (xTest, n2, p2) * R_EARTH);
+    float dFace3 = abs (projWonV_Dist (xTest, n3, p3) * R_EARTH);
+    float dFace4 = abs (projWonV_Dist (xTest, n4, p4) * R_EARTH);    
+    
+    // TODO add gaussian haze condition.
+  
+  }
+}
+
+void kernel::exploreGaussianHaze () {
+  
+  // Uses the side sets found in getSideSets and copies to each processor some of the neighboring
+  // chunk that might be needed in the gaussian smoother.
+  
+  // MPI variables.
+  int myRank    = MPI::COMM_WORLD.Get_rank ();
+  int worldSize = MPI::COMM_WORLD.Get_size ();
+  
+  // Buffer to transfer the side sets. TODO might also transfer ibool haze array, might not.
+  float *xStoreBuffer = new float [numGLLPoints];
+  float *yStoreBuffer = new float [numGLLPoints];
+  float *zStoreBuffer = new float [numGLLPoints];
+  
+  singlePrint ("\x1b[33mExploring Gaussian Haze.\x1b[0m");
+  
+  // Loop over all processors. This could be avoided if some way was invented to tell which of those
+  // were just too far away. Will have to see how fast this is.
+  clock_t begin = std::clock ();
+  for (size_t i=0; i<worldSize; i++) {
+        
+    if (i == myRank) {
+      
+      // Throw the current processor's coordStores to all others.
+      xStoreBuffer = xStore;    
+      yStoreBuffer = yStore;
+      zStoreBuffer = zStore;
+      
+    }
+          
+          
+    // coordinate store broadcast.
+    MPI::COMM_WORLD.Bcast (&xStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&yStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&zStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
+    
+    // Once these are broadcast, work through all interesting points and see if they should be
+    // included in the gaussian haze. LOCAL ARRAY. TODO.
+    for (size_t j=0; j<numGLLPoints; j++) {
+
+      float xLoc = xStore[j];
+      float yLoc = yStore[j];
+      float zLoc = zStore[j];
+            
+      // Work through all interesting points of REMOTE ARRAY. TODO might only need to broadcast
+      // the hazes in the first place. Like or with a bool array that only picks out of the hazes
+      // of both chunks and compares the distances. Yes i think that should work.
+      for (size_t k=0; k<numGLLPoints; k++) {
+          
+        float xRem = xStoreBuffer[k];
+        float yRem = yStoreBuffer[k];
+        float zRem = zStoreBuffer[k];
+
+        float distance = oneDimDist (xLoc, yLoc, zLoc, xRem, yRem, zRem);
+        
+      }
+            
+    }
+
+        
+  }
+  
+  clock_t end = std::clock();
+  double elapsed = double (end - begin) / CLOCKS_PER_SEC;  
+  
+  if (myRank == 0)
+    std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
+    
+}
+
 void kernel::createKDTree () {
+  
+  // Create kdTree of the kernel.
   
   // Initialize tree.
   tree = kd_create (3);
@@ -187,6 +341,11 @@ void kernel::findChunkDimensions () {
     
     radThetaPhi2xyz (radius[i], theta[i], phi[i], x, y, z);
     
+    // Store the cartesian coordinates.
+    xStore[i] = x;
+    yStore[i] = y;
+    zStore[i] = z;
+    
     // Cartesian box extremes.
     if (x < xMin)
       xMin = x;
@@ -301,6 +460,11 @@ void kernel::openCoordNetcdf () {
     // Read until end of line [myrank, numGLLPoints]
     count[0] = 1;
     count[1] = numGLLPoints;
+    
+    // Preallocate cartesian arrays.
+    xStore = new float [numGLLPoints];
+    yStore = new float [numGLLPoints];
+    zStore = new float [numGLLPoints];
     
     // Of course only read in with the number of processors used to create the file.
     if (myRank < numWroteProcs) {

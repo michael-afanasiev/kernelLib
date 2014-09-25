@@ -69,9 +69,11 @@ void writeExodus (float *regMeshArr, float *regX, float *regY, float *regZ,
 
   // Interpolated array.
   int idexo = ex_create ( "./testInterp.ex2", EX_CLOBBER, &comp_ws, &io_ws );
-  exodusErrorCheck ( ex_put_init( idexo, "Kernel", nDim, numNodes, numElem, nBlock, nNodeSet, nSideSet ), "ex_put_init" );
+  exodusErrorCheck ( ex_put_init( idexo, "Kernel", nDim, numNodes, numElem, nBlock, nNodeSet, 
+    nSideSet ), "ex_put_init" );
   exodusErrorCheck ( ex_put_coord ( idexo, nodeCorX, nodeCorY, nodeCorZ ), "ex_put_coord" );
-  exodusErrorCheck ( ex_put_elem_block ( idexo, 1, "HEX", numElem, nNodePerElem, 0 ), "ex_put_elem_block" );
+  exodusErrorCheck ( ex_put_elem_block ( idexo, 1, "HEX", numElem, nNodePerElem, 0 ), 
+    "ex_put_elem_block" );
   exodusErrorCheck ( ex_put_node_num_map ( idexo, nodeNumArr ), "ex_put_node_num_map" );
   exodusErrorCheck ( ex_put_elem_conn  ( idexo, 1, connect ), "ex_put_elem_conn" );
   exodusErrorCheck ( ex_put_var_param ( idexo, "n", nVars ), "ex_put_var_param" );
@@ -86,7 +88,7 @@ void exodusErrorCheck ( int ier, std::string function )
 
   if ( ier != 0 )
   {
-    std::cout << "ERROR in " << function << std::flush << std::endl;
+    std::cout << "ERROR in " << red << function << rst << std::flush << std::endl;
     exit (EXIT_FAILURE);
   }
 
