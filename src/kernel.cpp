@@ -17,6 +17,11 @@ kernel::kernel (std::string fName) {
   findChunkDimensions ();
   rotateYaxis         ();
   findChunkDimensions ();
+    
+  singlePrint ("Creating KD-tree.");
+  createKDTree ();
+  
+  MPI::COMM_WORLD.Barrier ();
   
 }
 
@@ -26,6 +31,26 @@ kernel::~kernel () {
   delete [] radius;
   delete [] theta;
   delete [] phi;
+  
+}
+
+void kernel::createKDTree () {
+  
+  // Initialize tree.
+  tree = kd_create (3);
+  
+  // Initialize the data array.
+  KDdat = new int [numGLLPoints];
+  
+  // Local xyz values. May not be appropriate.
+  float x, y, z;
+  for (size_t i=0; i<numGLLPoints; i++) {
+    
+    radThetaPhi2xyz (radius[i], theta[i], phi[i], x, y, z);
+    KDdat[i] = i;
+    kd_insert3 (tree, x, y, z, &KDdat[i]);
+      
+  }
   
 }
 
@@ -150,9 +175,39 @@ void kernel::findChunkDimensions () {
   float xSum=0;
   float ySum=0;
   float zSum=0;
+  
+  // Initialize rad averages.
+  float rSum=0;
+  
+  // Initialize xyzValues.  
+  radThetaPhi2xyz (radius[0], theta[0], phi[0], xMin, yMin, zMin);
+  radThetaPhi2xyz (radius[0], theta[0], phi[0], xMax, yMax, zMax);
+  
   for (size_t i=0; i<numGLLPoints; i++) {
     
     radThetaPhi2xyz (radius[i], theta[i], phi[i], x, y, z);
+    
+    // Cartesian box extremes.
+    if (x < xMin)
+      xMin = x;
+    
+    if (y < yMin)
+      yMin = y;
+    
+    if (z < zMin)
+      zMin = z;
+    
+    if (x > xMax)
+      xMax = x;
+    
+    if (y > yMax)
+      yMax = y;
+    
+    if (z > zMax)
+      zMax = z;        
+    
+    // Sum radius for average rad.
+    rSum += radius[i];
     
     // Sum components.
     xSum += x;
@@ -160,7 +215,7 @@ void kernel::findChunkDimensions () {
     zSum += z;
     
   }
-  
+    
   // Calculate magnitude and normalize.
   float magnitude = xSum*xSum + ySum*ySum + zSum*zSum;
   float xCenter   = xSum / magnitude;
@@ -169,6 +224,18 @@ void kernel::findChunkDimensions () {
   
   // Return center point.
   xyz2RadThetaPhi (radCenter, thetaCenter, phiCenter, xCenter, yCenter, zCenter);
+  
+  // Get average radius.
+  radCenter = rSum / numGLLPoints;
+  
+  // Get extreme spherical coordinates.
+  radiusMin = *std::min_element (radius, radius+numGLLPoints);
+  thetaMin  = *std::min_element (theta, theta+numGLLPoints);
+  phiMin    = *std::min_element (phi, phi+numGLLPoints);
+
+  radiusMax = *std::max_element (radius, radius+numGLLPoints);
+  thetaMax  = *std::max_element (theta, theta+numGLLPoints);
+  phiMax    = *std::max_element (phi, phi+numGLLPoints);
   
 }
 

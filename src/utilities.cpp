@@ -27,8 +27,8 @@ float deg2rad (float angleInDeg) {
   
 }
 
-void radThetaPhi2xyz (float rad, float theta, float phi,
-                      float &x,  float &y,    float &z) {
+void radThetaPhi2xyz (float &rad, float &theta, float &phi,
+                      float &x,   float &y,     float &z) {
                          
   // Converts a point in spherical coordinates to cartesian coordinates.
                          
@@ -38,8 +38,8 @@ void radThetaPhi2xyz (float rad, float theta, float phi,
                          
 }
 
-void xyz2RadThetaPhi (float &rad, float &theta, float &phi,
-                      float x,    float y,      float z) {
+void xyz2RadThetaPhi (float &rad,  float &theta,  float &phi,
+                      float &x,    float &y,      float &z) {
                         
   // Converts a point in cartesian coordiantes to spherical coordinates.
                          
@@ -48,4 +48,33 @@ void xyz2RadThetaPhi (float &rad, float &theta, float &phi,
   phi = atan2 (y, x);
 
 }
+
+bool checkRadius (float min, float max, float val) {
   
+  bool within=false;
+  if ((val <= max) && (val >= min))
+    within = true;
+  
+  return within;
+  
+}
+
+bool checkTheta (float min, float max, float val) {
+  
+  bool within=false;
+  if ((val <= max) && (val >= min))
+    within = true;
+  
+  return within;
+  
+}
+
+bool checkPhi (float min, float max, float val) {
+  
+  bool within=false;
+  if ((val <= max) && (val >= min))
+    within = true;
+  
+  return within;
+  
+}

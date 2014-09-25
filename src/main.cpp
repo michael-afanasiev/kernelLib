@@ -9,6 +9,8 @@ int main () {
   
   kernel kern ("./krn/betahKernelCrustMantle.nc");
   
+  mesh test (kern);
+    
   MPI::Finalize ();
 
 }
