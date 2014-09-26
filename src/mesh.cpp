@@ -15,9 +15,9 @@ void mesh::createMesh (kernel &kern) {
   int myRank = MPI::COMM_WORLD.Get_rank ();
   
   // Determine the discritization in each direction. TODO make variables.
-  dx = 50 / R_EARTH;
-  dy = 50 / R_EARTH;
-  dz = 50 / R_EARTH;
+  dx = 100 / R_EARTH;
+  dy = 100 / R_EARTH;
+  dz = 100 / R_EARTH;
   
   // Determines the number of points in each direction.
   nx = int (((kern.xMax + dx - kern.xMin) / dx) + 1);
@@ -89,8 +89,7 @@ void mesh::createMesh (kernel &kern) {
         
       }            
     }    
-  }
-   
+  }   
    
   // Report aww yeah. 
   MPI::COMM_WORLD.Barrier ();      

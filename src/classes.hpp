@@ -10,6 +10,7 @@
 // Global variables.
 static const float R_EARTH=6371.0;
 static const float ONE_DEG_RAD=1 * M_PI / 180.;
+static const float dHaze=300;
 // End global variables.
 
 // Colour codes for pretty writes.

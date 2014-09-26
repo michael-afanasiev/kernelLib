@@ -46,6 +46,9 @@ void kernel::findSideSets () {
   // Find the sidesets of a mesh chunk -- that is the nodes close enough to an edge that might 
   // require communicating.
   
+  // Allocate sideSet array.
+  sideSet = new bool [numGLLPoints]();
+  
   // Re-usable vectors for edges of chunk (for face plane).  
   std::vector<float> A, B, C;
   A.resize (3);
@@ -67,30 +70,30 @@ void kernel::findSideSets () {
   p4.resize (3);
   
   // Face 1.
-  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, A[0], A[1], A[2]);
-  radThetaPhi2xyz (radiusMax, thetaMin, phiMax, B[0], B[1], B[2]);
-  radThetaPhi2xyz (radiusMin, thetaMax, phiMax, C[0], C[1], C[2]);  
+  A[0] = xMax; A[1] = yMin; A[2] = zMax;
+  B[0] = xMin; B[1] = yMin; B[2] = zMax;
+  C[0] = xMax; C[1] = yMin; C[2] = zMin;
   n1 = getNormalVector (A, B, C);
   p1 = A;
 
   // Face 2.
-  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, A[0], A[1], A[2]);
-  radThetaPhi2xyz (radiusMax, thetaMax, phiMin, B[0], B[1], B[2]);
-  radThetaPhi2xyz (radiusMin, thetaMax, phiMax, C[0], C[1], C[2]);  
+  A[0] = xMax; A[1] = yMax; A[2] = zMax;
+  B[0] = xMax; B[1] = yMin; B[2] = zMax;
+  C[0] = xMax; C[1] = yMax; C[2] = zMin;
   n2 = getNormalVector (A, B, C);
   p2 = A;
 
   // Face 3.
-  radThetaPhi2xyz (radiusMax, thetaMin, phiMax, A[0], A[1], A[2]);
-  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, B[0], B[1], B[2]);
-  radThetaPhi2xyz (radiusMin, thetaMin, phiMax, C[0], C[1], C[2]);  
+  A[0] = xMin; A[1] = yMax; A[2] = zMax;
+  B[0] = xMax; B[1] = yMax; B[2] = zMax;
+  C[0] = xMin; C[1] = yMax; C[2] = zMin;  
   n3 = getNormalVector (A, B, C);
   p3 = A;
 
   // Face 4.
-  radThetaPhi2xyz (radiusMax, thetaMax, phiMin, A[0], A[1], A[2]);
-  radThetaPhi2xyz (radiusMax, thetaMax, phiMax, B[0], B[1], B[2]);
-  radThetaPhi2xyz (radiusMin, thetaMax, phiMin, C[0], C[1], C[2]);  
+  A[0] = xMin; A[1] = yMin; A[2] = zMax;
+  B[0] = xMin; B[1] = yMax; B[2] = zMax;
+  C[0] = xMin; C[1] = yMin; C[2] = zMin;
   n4 = getNormalVector (A, B, C);
   p4 = A;
   
@@ -111,7 +114,9 @@ void kernel::findSideSets () {
     float dFace3 = abs (projWonV_Dist (xTest, n3, p3) * R_EARTH);
     float dFace4 = abs (projWonV_Dist (xTest, n4, p4) * R_EARTH);    
     
-    // TODO add gaussian haze condition.
+    // Add point to sideSet.
+    if (dFace1 < dHaze || dFace2 < dHaze || dFace3 < dHaze || dFace4 < dHaze)
+      sideSet[i] = true;
   
   }
 }
@@ -145,8 +150,7 @@ void kernel::exploreGaussianHaze () {
       zStoreBuffer = zStore;
       
     }
-          
-          
+                    
     // coordinate store broadcast.
     MPI::COMM_WORLD.Bcast (&xStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
     MPI::COMM_WORLD.Bcast (&yStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
