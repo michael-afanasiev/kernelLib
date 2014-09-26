@@ -11,13 +11,18 @@ kernel::kernel (std::string fName) {
   openCoordNetcdf      ();
   openKernelNetcdf     ();
   
-  // Ugly, but need to rotate to  z-axis to get haze boundaries.
-  findChunkDimensions ();  
-  rotateZaxis         ();
+  // Get extreme spherical coordinates.
+  radiusMin = *std::min_element (radius, radius+numGLLPoints);
+  thetaMin  = *std::min_element (theta, theta+numGLLPoints);
+  phiMin    = *std::min_element (phi, phi+numGLLPoints);
+
+  radiusMax = *std::max_element (radius, radius+numGLLPoints);
+  thetaMax  = *std::max_element (theta, theta+numGLLPoints);
+  phiMax    = *std::max_element (phi, phi+numGLLPoints);
+  
   findChunkDimensions ();
-  rotateYaxis         ();
-  findChunkDimensions ();
-  findSideSets        ();
+  findNeighbours ();
+  constructMaster ();
   
   singlePrint ("Rotating chunks to z axis.");
   rotateZaxis         ();
@@ -41,13 +46,211 @@ kernel::~kernel () {
   
 }
 
+void kernel::constructMaster () {
+  
+  // This function assembles a master chunk from the surrounding ones, and resets the kernel 
+  // definitions.
+  
+  singlePrint ("\x1b[33mConstructing master chunk.\x1b[0m");
+  
+  // MPI variables.
+  int myRank = MPI::COMM_WORLD.Get_rank ();
+  
+  // New number of GLL points is the number of one chunk times the number of neighbouring chunks.
+  int newNumGLLPoints = numGLLPoints * (neighbours.size()+1);
+  
+  // These are scratch arrays that will be copied to.
+  float *scratchRadius    = new float [newNumGLLPoints];
+  float *scratchTheta     = new float [newNumGLLPoints];
+  float *scratchPhi       = new float [newNumGLLPoints];
+  float *scratchRawKernel = new float [newNumGLLPoints];
+  
+  // These are the MPI recv buffer arrays that will be recieved from each of the nieghbours.
+  float *recvBufRadius    = new float [numGLLPoints];
+  float *recvBufTheta     = new float [numGLLPoints];
+  float *recvBufPhi       = new float [numGLLPoints];
+  float *recvBufRawKernel = new float [numGLLPoints];
+  
+  // Send the neighbouring arrays. Non-blocking -- LARGE BUFFERS. Send to the processor stored in
+  // neighbours[i]. Tag the file with the current rank.
+  for (size_t i=0; i<neighbours.size(); i++) {
+    
+    MPI::COMM_WORLD.Isend (&radius[0],    numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
+    MPI::COMM_WORLD.Isend (&theta[0],     numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
+    MPI::COMM_WORLD.Isend (&phi[0],       numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
+    MPI::COMM_WORLD.Isend (&rawKernel[0], numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
+        
+  }
+  
+  // Recieve the neighbouring arrays from all interesting processes. FIXME THIS IS A RACE CONDITION.
+  for (size_t i=0; i<neighbours.size(); i++) {
+
+    MPI::COMM_WORLD.Recv (recvBufRadius,    numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
+    MPI::COMM_WORLD.Recv (recvBufTheta,     numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
+    MPI::COMM_WORLD.Recv (recvBufPhi,       numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
+    MPI::COMM_WORLD.Recv (recvBufRawKernel, numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
+    
+    // Here we fill up the scratch arrays. k loops over the receive buffer, and copies the receive
+    // buffer into the scratch array, which is dimensioned by its position in num_neighbours.
+    
+    size_t k=0;
+    for (size_t j=(i)*numGLLPoints; j<(i+1)*numGLLPoints; j++) {
+      
+      scratchRadius[j]    = recvBufRadius[k];
+      scratchTheta[j]     = recvBufTheta[k];
+      scratchPhi[j]       = recvBufPhi[k];
+      scratchRawKernel[j] = recvBufRawKernel[k];
+      k++;
+      
+    }
+                
+  }
+  
+  // Still need to copy one last value -- the original values belonging to that processor.
+  int k=0;
+  for (size_t i=neighbours.size()*numGLLPoints; i<(neighbours.size()+1)*numGLLPoints; i++) {    
+    
+    scratchRadius[i]    = recvBufRadius[k];
+    scratchTheta[i]     = recvBufTheta[k];
+    scratchPhi[i]       = recvBufPhi[k];
+    scratchRawKernel[i] = recvBufRawKernel[k];
+    k++;
+        
+  }
+  
+  // Phew. Free a whole bunch of now-useless memory.
+  delete [] radius;
+  delete [] theta;
+  delete [] phi;
+  delete [] rawKernel;
+  delete [] recvBufRadius;
+  delete [] recvBufTheta;
+  delete [] recvBufPhi;
+  delete [] recvBufRawKernel;
+  
+  // re-allocate the arrays that we're replacing with the new, expanded values.
+  radius    = new float [newNumGLLPoints];
+  theta     = new float [newNumGLLPoints];
+  phi       = new float [newNumGLLPoints];
+  rawKernel = new float [newNumGLLPoints];
+  
+  // Copy the scratch arrays into the original default arrays.
+  for (size_t i=0; i<newNumGLLPoints; i++) {
+    
+    radius[i]    = scratchRadius[i];
+    theta[i]     = scratchTheta[i];
+    phi[i]       = scratchPhi[i];
+    rawKernel[i] = scratchRawKernel[i];    
+    
+  }
+  
+  // Reset the number of GLL points. TODO see if anything else needs resetting.
+  numGLLPoints = newNumGLLPoints;
+  
+  // Free the scratch memory.
+  delete [] scratchRadius;
+  delete [] scratchTheta;
+  delete [] scratchPhi;
+  delete [] scratchRawKernel;
+      
+}
+
+void kernel::resetRotations () {
+    
+  // Resets coordinates to their original values. This is to save floating point errors when
+  // rotating like a madman.
+  
+  // Copy original arrays.
+  for (size_t i=0; i<numGLLPoints; i++) {
+    
+    radius[i] = radiusOrig[i];
+    theta[i]  = thetaOrig[i];
+    phi[i]    = phiOrig[i];
+    
+  }
+  
+  findChunkDimensions ();
+    
+}
+
+void kernel::findNeighbours () {
+  
+  // MPI variables.
+  int myRank    = MPI::COMM_WORLD.Get_rank ();
+  int worldSize = MPI::COMM_WORLD.Get_size ();
+  
+  // These vectors are used to determine neighboring chunks by distances to center.
+  std::vector<float> centerDistances;
+  std::vector<float> centerDistancesIndex;
+    
+  singlePrint ("\x1b[33mFinding neighbours.\x1b[0m");  
+  float xCenterBuf;
+  float yCenterBuf;
+  float zCenterBuf;
+  
+  // Loop over all processors. This could be avoided if some way was invented to tell which of those
+  // were just too far away. Will have to see how fast this is.
+  for (size_t i=0; i<worldSize; i++) {
+        
+    if (i == myRank) {
+      
+      // Throw the current processor's centers to all others.
+      xCenterBuf = xCenter;
+      yCenterBuf = yCenter;
+      zCenterBuf = zCenter;
+      
+    }
+    
+    // Broadcast centers.
+    MPI::COMM_WORLD.Bcast (&xCenterBuf, 1, MPI::FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&yCenterBuf, 1, MPI::FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&zCenterBuf, 1, MPI::FLOAT, i);
+    
+    // Determine distance.
+    float distFromCenter = distFromPoint (xCenter, yCenter, zCenter, xCenterBuf, yCenterBuf, 
+      zCenterBuf) * R_EARTH;
+      
+    // Save distances. There are two arrays as one will be used an an index, and the other will 
+    // be sorted.
+    centerDistances.push_back      (distFromCenter);
+    centerDistancesIndex.push_back (distFromCenter);      
+                              
+  }  
+  
+  // Sort the distance array.
+  std::sort (centerDistances.begin(), centerDistances.end());
+  
+  // Loop through sorted distance array, taking n closest centers as the neighbouring chunks
+  // (n=8 usually).
+  for (size_t i=0; i<centerDistances.size(); i++) {    
+    for (size_t j=0; j<centerDistancesIndex.size(); j++) {
+  
+      if ((centerDistances[i] == centerDistancesIndex[j]) && (centerDistances[i] != 0))
+        neighbours.push_back (j);      
+  
+    }
+  }
+    
+}
+
 void kernel::findSideSets () {
   
   // Find the sidesets of a mesh chunk -- that is the nodes close enough to an edge that might 
   // require communicating.
   
+  singlePrint ("\x1b[33mFinding side sets.\x1b[0m");
+  
+  findChunkDimensions ();  
+  rotateZaxis         ();
+  findChunkDimensions ();
+  rotateYaxis         ();
+  findChunkDimensions ();
+  
   // Allocate sideSet array.
-  sideSet = new bool [numGLLPoints]();
+  face1 = new bool [numGLLPoints]();
+  face2 = new bool [numGLLPoints]();
+  face3 = new bool [numGLLPoints]();
+  face4 = new bool [numGLLPoints]();
   
   // Re-usable vectors for edges of chunk (for face plane).  
   std::vector<float> A, B, C;
@@ -102,6 +305,10 @@ void kernel::findSideSets () {
   xTest.resize (3);
   
   // Loop over all points.
+  int face1Count=0;
+  int face2Count=0;
+  int face3Count=0;
+  int face4Count=0;
   for (size_t i=0; i<numGLLPoints; i++) {
     
     xTest[0] = xStore[i];
@@ -114,11 +321,20 @@ void kernel::findSideSets () {
     float dFace3 = abs (projWonV_Dist (xTest, n3, p3) * R_EARTH);
     float dFace4 = abs (projWonV_Dist (xTest, n4, p4) * R_EARTH);    
     
-    // Add point to sideSet.
-    if (dFace1 < dHaze || dFace2 < dHaze || dFace3 < dHaze || dFace4 < dHaze)
-      sideSet[i] = true;
-  
+    if (dFace1 < dHaze)
+      face1[i] = true;
+    
+    if (dFace2 < dHaze)
+      face2[i] = true;
+    
+    if (dFace3 < dHaze)
+      face3[i] = true;
+    
+    if (dFace4 < dHaze)
+      face4[i] = true;
+    
   }
+  
 }
 
 void kernel::exploreGaussianHaze () {
@@ -134,6 +350,7 @@ void kernel::exploreGaussianHaze () {
   float *xStoreBuffer = new float [numGLLPoints];
   float *yStoreBuffer = new float [numGLLPoints];
   float *zStoreBuffer = new float [numGLLPoints];
+  bool *sideSetBuffer = new bool [numGLLPoints];
   
   singlePrint ("\x1b[33mExploring Gaussian Haze.\x1b[0m");
   
@@ -152,13 +369,17 @@ void kernel::exploreGaussianHaze () {
     }
                     
     // coordinate store broadcast.
-    MPI::COMM_WORLD.Bcast (&xStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
-    MPI::COMM_WORLD.Bcast (&yStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
-    MPI::COMM_WORLD.Bcast (&zStoreBuffer[0], numGLLPoints, MPI_FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&xStoreBuffer[0],  numGLLPoints, MPI::FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&yStoreBuffer[0],  numGLLPoints, MPI::FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&zStoreBuffer[0],  numGLLPoints, MPI::FLOAT, i);
+    MPI::COMM_WORLD.Bcast (&sideSetBuffer[0], numGLLPoints, MPI::BOOL,  i);
     
     // Once these are broadcast, work through all interesting points and see if they should be
     // included in the gaussian haze. LOCAL ARRAY. TODO.
     for (size_t j=0; j<numGLLPoints; j++) {
+      
+      // if (sideSet[j] == false)
+        // continue;
 
       float xLoc = xStore[j];
       float yLoc = yStore[j];
@@ -168,6 +389,9 @@ void kernel::exploreGaussianHaze () {
       // the hazes in the first place. Like or with a bool array that only picks out of the hazes
       // of both chunks and compares the distances. Yes i think that should work.
       for (size_t k=0; k<numGLLPoints; k++) {
+        
+        // if (sideSet[k] == false)
+          // continue;
           
         float xRem = xStoreBuffer[k];
         float yRem = yStoreBuffer[k];
@@ -178,12 +402,18 @@ void kernel::exploreGaussianHaze () {
       }
             
     }
+    cout << i << endl;
 
         
   }
   
   clock_t end = std::clock();
   double elapsed = double (end - begin) / CLOCKS_PER_SEC;  
+  
+  delete [] xStoreBuffer;
+  delete [] yStoreBuffer;
+  delete [] zStoreBuffer;
+  delete [] sideSetBuffer;
   
   if (myRank == 0)
     std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
@@ -380,25 +610,20 @@ void kernel::findChunkDimensions () {
   }
     
   // Calculate magnitude and normalize.
-  float magnitude = xSum*xSum + ySum*ySum + zSum*zSum;
-  float xCenter   = xSum / magnitude;
-  float yCenter   = ySum / magnitude;
-  float zCenter   = zSum / magnitude;
-  
+  xCenter         = xSum / numGLLPoints;
+  yCenter         = ySum / numGLLPoints;
+  zCenter         = zSum / numGLLPoints;
+    
+  float magnitude = sqrt (xCenter*xCenter + yCenter*yCenter + zCenter*zCenter);
+  xCenter         = xCenter / magnitude;
+  yCenter         = yCenter / magnitude;
+  zCenter         = zCenter / magnitude;
+    
   // Return center point.
   xyz2RadThetaPhi (radCenter, thetaCenter, phiCenter, xCenter, yCenter, zCenter);
   
   // Get average radius.
   radCenter = rSum / numGLLPoints;
-  
-  // Get extreme spherical coordinates.
-  radiusMin = *std::min_element (radius, radius+numGLLPoints);
-  thetaMin  = *std::min_element (theta, theta+numGLLPoints);
-  phiMin    = *std::min_element (phi, phi+numGLLPoints);
-
-  radiusMax = *std::max_element (radius, radius+numGLLPoints);
-  thetaMax  = *std::max_element (theta, theta+numGLLPoints);
-  phiMax    = *std::max_element (phi, phi+numGLLPoints);
   
 }
 
@@ -479,6 +704,18 @@ void kernel::openCoordNetcdf () {
       NcRadius.getVar (start, count, radius);
       NcTheta.getVar  (start, count, theta);
       NcPhi.getVar    (start, count, phi);
+    }
+    
+    // Save original arrays.
+    radiusOrig = new float [numGLLPoints];
+    thetaOrig  = new float [numGLLPoints];
+    phiOrig    = new float [numGLLPoints];    
+    for (size_t i=0; i<numGLLPoints; i++) {
+      
+      radiusOrig[i] = radius[i];
+      thetaOrig[i]  = theta[i];
+      phiOrig[i]    = phi[i];
+      
     }
     
     // Destructor will close file.

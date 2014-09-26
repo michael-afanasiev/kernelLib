@@ -15,9 +15,9 @@ void mesh::createMesh (kernel &kern) {
   int myRank = MPI::COMM_WORLD.Get_rank ();
   
   // Determine the discritization in each direction. TODO make variables.
-  dx = 100 / R_EARTH;
-  dy = 100 / R_EARTH;
-  dz = 100 / R_EARTH;
+  dx = 500 / R_EARTH;
+  dy = 500 / R_EARTH;
+  dz = 500 / R_EARTH;
   
   // Determines the number of points in each direction.
   nx = int (((kern.xMax + dx - kern.xMin) / dx) + 1);
@@ -70,7 +70,7 @@ void mesh::createMesh (kernel &kern) {
         int index   = k + j * nz + i * (nz * ny);
         if (checkR && checkT && checkP) {
           
-          // Extract the point from the KDtree. 
+          // Extract the point from the KDtree.
           kdres *set = kd_nearest3 (kern.tree, xLoc, yLoc, zLoc);
           void  *ind = kd_res_item_data (set);
           int pnt    = * (int *) ind;

@@ -10,7 +10,7 @@
 // Global variables.
 static const float R_EARTH=6371.0;
 static const float ONE_DEG_RAD=1 * M_PI / 180.;
-static const float dHaze=300;
+static const float dHaze=100;
 // End global variables.
 
 // Colour codes for pretty writes.
@@ -80,10 +80,19 @@ private:
   float *theta; // latitude.
   float *phi;   // longitude.
   
+  // Saved original dimensions.
+  float *radiusOrig;
+  float *thetaOrig;
+  float *phiOrig;
+  
   // Cartesian dimensions.
   float *xStore;
   float *yStore;
   float *zStore;
+  
+  float xCenter;
+  float yCenter;
+  float zCenter;
   
   // Spherical extremes;
   float radiusMin, thetaMin, phiMin;
@@ -103,7 +112,12 @@ private:
   kdtree *tree;
   
   // Book keeping
-  bool *sideSet;
+  bool *face1;
+  bool *face2;
+  bool *face3;
+  bool *face4;
+  
+  std::vector<int> neighbours;
     
   // Internal functions.
   void openCoordNetcdf      ();
@@ -115,6 +129,9 @@ private:
   void createKDTree         ();
   void exploreGaussianHaze  ();
   void findSideSets         ();
+  void resetRotations       ();
+  void findNeighbours       ();
+  void constructMaster      ();
     
 };
 
