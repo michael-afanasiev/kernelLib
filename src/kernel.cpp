@@ -11,20 +11,12 @@ kernel::kernel (std::string fName) {
   openCoordNetcdf      ();
   openKernelNetcdf     ();
   
-  // Get extreme spherical coordinates.
-  radiusMin = *std::min_element (radius, radius+numGLLPoints);
-  thetaMin  = *std::min_element (theta, theta+numGLLPoints);
-  phiMin    = *std::min_element (phi, phi+numGLLPoints);
-
-  radiusMax = *std::max_element (radius, radius+numGLLPoints);
-  thetaMax  = *std::max_element (theta, theta+numGLLPoints);
-  phiMax    = *std::max_element (phi, phi+numGLLPoints);
-  
   findChunkDimensions ();
   findNeighbours ();
   constructMaster ();
   
   singlePrint ("Rotating chunks to z axis.");
+  findChunkDimensions ();
   rotateZaxis         ();
   findChunkDimensions ();
   rotateYaxis         ();
@@ -54,7 +46,11 @@ void kernel::constructMaster () {
   singlePrint ("\x1b[33mConstructing master chunk.\x1b[0m");
   
   // MPI variables.
-  int myRank = MPI::COMM_WORLD.Get_rank ();
+  int myRank     = MPI::COMM_WORLD.Get_rank ();
+  int RAD_TAG    = 0;
+  int THETA_TAG  = 1;
+  int PHI_TAG    = 2;
+  int KERNEL_TAG = 3;
   
   // New number of GLL points is the number of one chunk times the number of neighbouring chunks.
   int newNumGLLPoints = numGLLPoints * (neighbours.size()+1);
@@ -71,24 +67,26 @@ void kernel::constructMaster () {
   float *recvBufPhi       = new float [numGLLPoints];
   float *recvBufRawKernel = new float [numGLLPoints];
   
+  for (size_t i=0; i<numGLLPoints; i++) {
+    rawKernel[i] = myRank;
+  }
+  
   // Send the neighbouring arrays. Non-blocking -- LARGE BUFFERS. Send to the processor stored in
   // neighbours[i]. Tag the file with the current rank.
   for (size_t i=0; i<neighbours.size(); i++) {
     
-    MPI::COMM_WORLD.Isend (&radius[0],    numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
-    MPI::COMM_WORLD.Isend (&theta[0],     numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
-    MPI::COMM_WORLD.Isend (&phi[0],       numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
-    MPI::COMM_WORLD.Isend (&rawKernel[0], numGLLPoints, MPI::FLOAT, neighbours[i], myRank);
-        
-  }
+    MPI::COMM_WORLD.Isend (&radius[0],    numGLLPoints, MPI::FLOAT, neighbours[i], RAD_TAG);
+    MPI::COMM_WORLD.Isend (&theta[0],     numGLLPoints, MPI::FLOAT, neighbours[i], THETA_TAG);
+    MPI::COMM_WORLD.Isend (&phi[0],       numGLLPoints, MPI::FLOAT, neighbours[i], PHI_TAG);
+    MPI::COMM_WORLD.Isend (&rawKernel[0], numGLLPoints, MPI::FLOAT, neighbours[i], KERNEL_TAG);
+    
   
   // Recieve the neighbouring arrays from all interesting processes. FIXME THIS IS A RACE CONDITION.
-  for (size_t i=0; i<neighbours.size(); i++) {
 
-    MPI::COMM_WORLD.Recv (recvBufRadius,    numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
-    MPI::COMM_WORLD.Recv (recvBufTheta,     numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
-    MPI::COMM_WORLD.Recv (recvBufPhi,       numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
-    MPI::COMM_WORLD.Recv (recvBufRawKernel, numGLLPoints, MPI::FLOAT, neighbours[i], neighbours[i]);
+    MPI::COMM_WORLD.Recv (recvBufRadius,    numGLLPoints, MPI::FLOAT, neighbours[i], RAD_TAG);
+    MPI::COMM_WORLD.Recv (recvBufTheta,     numGLLPoints, MPI::FLOAT, neighbours[i], THETA_TAG);
+    MPI::COMM_WORLD.Recv (recvBufPhi,       numGLLPoints, MPI::FLOAT, neighbours[i], PHI_TAG);
+    MPI::COMM_WORLD.Recv (recvBufRawKernel, numGLLPoints, MPI::FLOAT, neighbours[i], KERNEL_TAG);
     
     // Here we fill up the scratch arrays. k loops over the receive buffer, and copies the receive
     // buffer into the scratch array, which is dimensioned by its position in num_neighbours.
@@ -107,13 +105,13 @@ void kernel::constructMaster () {
   }
   
   // Still need to copy one last value -- the original values belonging to that processor.
-  int k=0;
+  size_t k=0;
   for (size_t i=neighbours.size()*numGLLPoints; i<(neighbours.size()+1)*numGLLPoints; i++) {    
     
-    scratchRadius[i]    = recvBufRadius[k];
-    scratchTheta[i]     = recvBufTheta[k];
-    scratchPhi[i]       = recvBufPhi[k];
-    scratchRawKernel[i] = recvBufRawKernel[k];
+    scratchRadius[i]    = radius[k];
+    scratchTheta[i]     = theta[k];
+    scratchPhi[i]       = phi[k];
+    scratchRawKernel[i] = rawKernel[k];
     k++;
         
   }
@@ -230,10 +228,15 @@ void kernel::findNeighbours () {
   
     }
   }
+  
+  // Sort by processor number (helps future broadcast).
+  std::sort (neighbours.begin(), neighbours.end());
     
 }
 
 void kernel::findSideSets () {
+  
+  // FIXME perhaps obsolete.
   
   // Find the sidesets of a mesh chunk -- that is the nodes close enough to an edge that might 
   // require communicating.
@@ -338,6 +341,8 @@ void kernel::findSideSets () {
 }
 
 void kernel::exploreGaussianHaze () {
+  
+  // FIXME Perhaps obsolete
   
   // Uses the side sets found in getSideSets and copies to each processor some of the neighboring
   // chunk that might be needed in the gaussian smoother.
@@ -624,6 +629,24 @@ void kernel::findChunkDimensions () {
   
   // Get average radius.
   radCenter = rSum / numGLLPoints;
+  
+  // Get extreme spherical coordinates (original).
+  radiusMinOrig = *std::min_element (radiusOrig, radiusOrig+numGLLPoints);
+  thetaMinOrig  = *std::min_element (thetaOrig, thetaOrig+numGLLPoints);
+  phiMinOrig    = *std::min_element (phiOrig, phiOrig+numGLLPoints);
+
+  radiusMaxOrig = *std::max_element (radiusOrig, radiusOrig+numGLLPoints);
+  thetaMaxOrig  = *std::max_element (thetaOrig, thetaOrig+numGLLPoints);
+  phiMaxOrig    = *std::max_element (phiOrig, phiOrig+numGLLPoints);
+  
+  // Get extreme spherical coordinates (after possible rotation).
+  radiusMin     = *std::min_element (radius, radius+numGLLPoints);
+  thetaMin      = *std::min_element (theta, theta+numGLLPoints);
+  phiMin        = *std::min_element (phi, phi+numGLLPoints);
+
+  radiusMax     = *std::max_element (radius, radius+numGLLPoints);
+  thetaMax      = *std::max_element (theta, theta+numGLLPoints);
+  phiMax        = *std::max_element (phi, phi+numGLLPoints);
   
 }
 

@@ -94,9 +94,13 @@ private:
   float yCenter;
   float zCenter;
   
-  // Spherical extremes;
+  // Spherical extremes (possibly rotated).
   float radiusMin, thetaMin, phiMin;
   float radiusMax, thetaMax, phiMax;
+
+  // Spherical extremes (orignal).
+  float radiusMinOrig, thetaMinOrig, phiMinOrig;
+  float radiusMaxOrig, thetaMaxOrig, phiMaxOrig;
   
   // Cartesian extremes.
   float xMin, yMin, zMin;
@@ -147,10 +151,7 @@ private:
   float dx, dy, dz;
   int nx, ny, nz;
   long gridSize;
-  
-  // Internal functions.
-  void createMesh (kernel &);
-  
+    
   // Coordinate arrays.
   float *x;
   float *y;
@@ -158,8 +159,13 @@ private:
   
   // Parameter.
   float *value;
+  float *smoothValue;
   
   // In volume flag.
   bool *chunk;
+  
+  // Internal functions.
+  void createMesh (kernel &);
+  void smoothMesh (kernel &);
 
 };
