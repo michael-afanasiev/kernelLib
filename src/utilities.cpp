@@ -4,6 +4,7 @@ void singlePrint (std::string string) {
   
   // For use with MPI -- prints from a single core.
   
+  MPI::COMM_WORLD.Barrier ();  
   if (MPI::COMM_WORLD.Get_rank () == 0)
     std::cout << string << std::flush << std::endl;
   
@@ -80,6 +81,7 @@ bool checkPhi (float min, float max, float val) {
   bool within=false;
   if ((val <= max) && (val >= min))
     within = true;
+  
   
   return within;
   
@@ -162,3 +164,4 @@ float oneDimDist (float &xPoint, float &yPoint, float &zPoint,
   // return *std::min_element (d, d+3);
   
 }
+

@@ -8,8 +8,9 @@ int main () {
     std::cout << rst << std::endl;
   
   kernel kern ("./krn/betahKernelCrustMantle.nc");
-  
   mesh test (kern);
+
+  singlePrint (" ");
     
   MPI::Finalize ();
 

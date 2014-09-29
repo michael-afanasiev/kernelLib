@@ -41,7 +41,7 @@ void xyz2RadThetaPhi (float &, float &, float &, float &, float &, float &);
 void singlePrint (std::string);
 
 void writeExodus (float *regMeshArr, float *regX, float *regY, float *regZ, 
-                  int &nx, int &ny, int &nz);
+                  int &nx, int &ny, int &nz, std::string);
                   
 std::vector<float> getNormalVector (std::vector<float> &A, 
                                     std::vector<float> &B, 
@@ -74,6 +74,9 @@ private:
   
   // Kernel values.
   float *rawKernel;
+  
+  // Region tags
+  bool *inReg;
   
   // Kernel dimensions.
   float *radius;
@@ -162,7 +165,7 @@ private:
   float *smoothValue;
   
   // In volume flag.
-  bool *chunk;
+  bool *reg;
   
   // Internal functions.
   void createMesh (kernel &);

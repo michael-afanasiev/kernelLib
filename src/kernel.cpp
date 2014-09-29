@@ -12,7 +12,7 @@ kernel::kernel (std::string fName) {
   openKernelNetcdf     ();
   
   findChunkDimensions ();
-  findNeighbours ();
+  findNeighbours  ();
   constructMaster ();
   
   singlePrint ("Rotating chunks to z axis.");
@@ -22,7 +22,6 @@ kernel::kernel (std::string fName) {
   rotateYaxis         ();
   findChunkDimensions ();
     
-  singlePrint  ("Creating KD-tree.");
   createKDTree ();
   
   MPI::COMM_WORLD.Barrier ();
@@ -43,7 +42,7 @@ void kernel::constructMaster () {
   // This function assembles a master chunk from the surrounding ones, and resets the kernel 
   // definitions.
   
-  singlePrint ("\x1b[33mConstructing master chunk.\x1b[0m");
+  singlePrint ("Constructing master chunk.");
   
   // MPI variables.
   int myRank     = MPI::COMM_WORLD.Get_rank ();
@@ -60,17 +59,16 @@ void kernel::constructMaster () {
   float *scratchTheta     = new float [newNumGLLPoints];
   float *scratchPhi       = new float [newNumGLLPoints];
   float *scratchRawKernel = new float [newNumGLLPoints];
+      
+  // Initialize region tag.
+  bool *scratchInReg = new bool [newNumGLLPoints]();
   
   // These are the MPI recv buffer arrays that will be recieved from each of the nieghbours.
   float *recvBufRadius    = new float [numGLLPoints];
   float *recvBufTheta     = new float [numGLLPoints];
   float *recvBufPhi       = new float [numGLLPoints];
-  float *recvBufRawKernel = new float [numGLLPoints];
-  
-  for (size_t i=0; i<numGLLPoints; i++) {
-    rawKernel[i] = myRank;
-  }
-  
+  float *recvBufRawKernel = new float [numGLLPoints];  
+    
   // Send the neighbouring arrays. Non-blocking -- LARGE BUFFERS. Send to the processor stored in
   // neighbours[i]. Tag the file with the current rank.
   for (size_t i=0; i<neighbours.size(); i++) {
@@ -78,19 +76,16 @@ void kernel::constructMaster () {
     MPI::COMM_WORLD.Isend (&radius[0],    numGLLPoints, MPI::FLOAT, neighbours[i], RAD_TAG);
     MPI::COMM_WORLD.Isend (&theta[0],     numGLLPoints, MPI::FLOAT, neighbours[i], THETA_TAG);
     MPI::COMM_WORLD.Isend (&phi[0],       numGLLPoints, MPI::FLOAT, neighbours[i], PHI_TAG);
-    MPI::COMM_WORLD.Isend (&rawKernel[0], numGLLPoints, MPI::FLOAT, neighbours[i], KERNEL_TAG);
-    
+    MPI::COMM_WORLD.Isend (&rawKernel[0], numGLLPoints, MPI::FLOAT, neighbours[i], KERNEL_TAG);    
   
-  // Recieve the neighbouring arrays from all interesting processes. FIXME THIS IS A RACE CONDITION.
-
+  // Recieve the neighbouring arrays from all interesting processes.
     MPI::COMM_WORLD.Recv (recvBufRadius,    numGLLPoints, MPI::FLOAT, neighbours[i], RAD_TAG);
     MPI::COMM_WORLD.Recv (recvBufTheta,     numGLLPoints, MPI::FLOAT, neighbours[i], THETA_TAG);
     MPI::COMM_WORLD.Recv (recvBufPhi,       numGLLPoints, MPI::FLOAT, neighbours[i], PHI_TAG);
     MPI::COMM_WORLD.Recv (recvBufRawKernel, numGLLPoints, MPI::FLOAT, neighbours[i], KERNEL_TAG);
     
     // Here we fill up the scratch arrays. k loops over the receive buffer, and copies the receive
-    // buffer into the scratch array, which is dimensioned by its position in num_neighbours.
-    
+    // buffer into the scratch array, which is dimensioned by its position in num_neighbours.    
     size_t k=0;
     for (size_t j=(i)*numGLLPoints; j<(i+1)*numGLLPoints; j++) {
       
@@ -112,18 +107,19 @@ void kernel::constructMaster () {
     scratchTheta[i]     = theta[k];
     scratchPhi[i]       = phi[k];
     scratchRawKernel[i] = rawKernel[k];
+    scratchInReg[i]     = true;
     k++;
         
   }
   
   // Phew. Free a whole bunch of now-useless memory.
-  delete [] radius;
-  delete [] theta;
   delete [] phi;
+  delete [] theta;
+  delete [] radius;
   delete [] rawKernel;
-  delete [] recvBufRadius;
-  delete [] recvBufTheta;
   delete [] recvBufPhi;
+  delete [] recvBufTheta;
+  delete [] recvBufRadius;
   delete [] recvBufRawKernel;
   
   // re-allocate the arrays that we're replacing with the new, expanded values.
@@ -131,6 +127,7 @@ void kernel::constructMaster () {
   theta     = new float [newNumGLLPoints];
   phi       = new float [newNumGLLPoints];
   rawKernel = new float [newNumGLLPoints];
+  inReg     = new bool  [newNumGLLPoints];
   
   // Copy the scratch arrays into the original default arrays.
   for (size_t i=0; i<newNumGLLPoints; i++) {
@@ -138,7 +135,8 @@ void kernel::constructMaster () {
     radius[i]    = scratchRadius[i];
     theta[i]     = scratchTheta[i];
     phi[i]       = scratchPhi[i];
-    rawKernel[i] = scratchRawKernel[i];    
+    rawKernel[i] = scratchRawKernel[i];   
+    inReg[i]     = scratchInReg[i]; 
     
   }
   
@@ -146,9 +144,10 @@ void kernel::constructMaster () {
   numGLLPoints = newNumGLLPoints;
   
   // Free the scratch memory.
-  delete [] scratchRadius;
-  delete [] scratchTheta;
   delete [] scratchPhi;
+  delete [] scratchInReg;
+  delete [] scratchTheta;
+  delete [] scratchRadius;
   delete [] scratchRawKernel;
       
 }
@@ -181,7 +180,7 @@ void kernel::findNeighbours () {
   std::vector<float> centerDistances;
   std::vector<float> centerDistancesIndex;
     
-  singlePrint ("\x1b[33mFinding neighbours.\x1b[0m");  
+  singlePrint ("Finding neighbours.");  
   float xCenterBuf;
   float yCenterBuf;
   float zCenterBuf;
@@ -429,6 +428,11 @@ void kernel::createKDTree () {
   
   // Create kdTree of the kernel.
   
+  int myRank = MPI::COMM_WORLD.Get_rank ();
+  
+  singlePrint  ("\n\x1b[33mCreating KD-tree. ");
+  clock_t begin = std::clock ();  
+  
   // Initialize tree.
   tree = kd_create (3);
   
@@ -442,8 +446,14 @@ void kernel::createKDTree () {
     radThetaPhi2xyz (radius[i], theta[i], phi[i], x, y, z);
     KDdat[i] = i;
     kd_insert3 (tree, x, y, z, &KDdat[i]);
-      
+    
   }
+
+  MPI::COMM_WORLD.Barrier ();      
+  clock_t end = std::clock();
+  double elapsed = double (end - begin) / CLOCKS_PER_SEC;  
+  if (myRank == 0)
+    std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
   
 }
 
@@ -629,16 +639,7 @@ void kernel::findChunkDimensions () {
   
   // Get average radius.
   radCenter = rSum / numGLLPoints;
-  
-  // Get extreme spherical coordinates (original).
-  radiusMinOrig = *std::min_element (radiusOrig, radiusOrig+numGLLPoints);
-  thetaMinOrig  = *std::min_element (thetaOrig, thetaOrig+numGLLPoints);
-  phiMinOrig    = *std::min_element (phiOrig, phiOrig+numGLLPoints);
 
-  radiusMaxOrig = *std::max_element (radiusOrig, radiusOrig+numGLLPoints);
-  thetaMaxOrig  = *std::max_element (thetaOrig, thetaOrig+numGLLPoints);
-  phiMaxOrig    = *std::max_element (phiOrig, phiOrig+numGLLPoints);
-  
   // Get extreme spherical coordinates (after possible rotation).
   radiusMin     = *std::min_element (radius, radius+numGLLPoints);
   thetaMin      = *std::min_element (theta, theta+numGLLPoints);
@@ -684,8 +685,8 @@ void kernel::openCoordNetcdf () {
     numGLLPoints   = coordDim.getSize ();
   
     if (myRank == 0)
-      std::cout << mgn << "\tNumber of solver processers:\t " << numWroteProcs
-        << "\n\tNumber of GLL points:\t\t " << numGLLPoints << rst << "\n" << std::endl;
+      std::cout << mgn << "Number of solver processers:\t " << numWroteProcs
+        << "\nNumber of GLL points:\t\t " << numGLLPoints << rst << "\n" << std::endl;
     
     // Current error handling. Only can have as many cores as we did for the simulation.
     if (worldSize > numWroteProcs) {
@@ -783,8 +784,8 @@ void kernel::openKernelNetcdf () {
     numGLLPoints  = kernDim.getSize ();
   
     if (myRank == 0)
-      std::cout << mgn << "\tNumber of solver processers:\t " << numWroteProcs
-        << "\n\tNumber of GLL points:\t\t " << numGLLPoints << rst << "\n" << std::endl;
+      std::cout << mgn << "Number of solver processers:\t " << numWroteProcs
+        << "\nNumber of GLL points:\t\t " << numGLLPoints << rst << "\n" << std::endl;
     
     // Set up the MPI read chunk array.
     std::vector<size_t> start;

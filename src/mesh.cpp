@@ -30,14 +30,15 @@ void mesh::createMesh (kernel &kern) {
   
   // Report whats up in pretty colours.
   if (myRank == 0 )
-    std::cout << mgn << "\tTotal size:\t" << gridSize 
-      << "\n\tnx:\t\t" << nx 
-      << "\n\tny:\t\t" << ny 
-      << "\n\tnz:\t\t" << nz << rst << std::endl;
+    std::cout << mgn << "Total size:\t" << gridSize 
+      << "\nnx:\t\t" << nx 
+      << "\nny:\t\t" << ny 
+      << "\nnz:\t\t" << nz << rst << std::endl;
       
     
   // Set up interpolation variables. TODO Chunk might be unused....
   value = new float [gridSize]();
+  reg   = new bool  [gridSize]();
   x     = new float [nx]();
   y     = new float [ny]();
   z     = new float [nz]();
@@ -74,15 +75,16 @@ void mesh::createMesh (kernel &kern) {
           kdres *set = kd_nearest3 (kern.tree, xLoc, yLoc, zLoc);
           void  *ind = kd_res_item_data (set);
           int pnt    = * (int *) ind;
-          data       = 100;//kern.rawKernel[pnt];
-          within     = true;
+          data       = kern.rawKernel[pnt];
+          within     = kern.inReg[pnt];
 
           kd_res_free (set);
                     
         }
               
         // Save the point kernel in value, the physical location in xyz.
-        value[index] = data;        
+        value[index] = data;  
+        reg[index]   = within;      
         x[i]         = xLoc;
         y[j]         = yLoc;
         z[k]         = zLoc;
@@ -90,6 +92,17 @@ void mesh::createMesh (kernel &kern) {
       }            
     }    
   }   
+
+  // Here we can play with the interpolated kernels (for debugging).
+  // for (size_t i=0; i<gridSize; i++) {
+  //     value[i] = 100;
+  //   }
+  //
+  // for (size_t i=0; i<gridSize; i++) {
+  //   if (reg[i]) {
+  //     value[i] = 0.;
+  //   }
+  // }
    
   // Report aww yeah. 
   MPI::COMM_WORLD.Barrier ();      
@@ -99,15 +112,17 @@ void mesh::createMesh (kernel &kern) {
     std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
   
   if (myRank == 1)
-    writeExodus (value, x, y, z, nx, ny, nz);
+    writeExodus (value, x, y, z, nx, ny, nz, "unSmoothed.ex2");
   
 }
 
 void mesh::smoothMesh (kernel &kern) {
   
-  float xVarSquare = 50*50;
-  float yVarSquare = 50*50;
-  float zVarSquare = 50*50;
+  int myRank = MPI::COMM_WORLD.Get_rank ();
+  
+  float xVarSquare = 100 / R_EARTH;
+  float yVarSquare = 100 / R_EARTH;
+  float zVarSquare = 100 / R_EARTH;
   
   // MPI variables.
   int rank      = MPI::COMM_WORLD.Get_rank ();
@@ -124,7 +139,7 @@ void mesh::smoothMesh (kernel &kern) {
   // Time.
   clock_t begin = std::clock();
   
-  singlePrint ("\n\x1b[33mSmoothing.\x1b[0m\n\tPass 1.");
+  singlePrint ("\n\x1b[33mSmoothing.\x1b[035m\nPass 1.");
   
   for (size_t i=0; i<nx; i++) {
     for (size_t j=0; j<ny; j++) {
@@ -132,23 +147,9 @@ void mesh::smoothMesh (kernel &kern) {
         
         // Mesh index.
         size_t index = k + nz * (j + i * ny);
-        
-        // Position in regular mesh.
-        float xLoc = kern.xMin + i * dx;
-        float yLoc = kern.yMin + j * dy;
-        float zLoc = kern.zMin + k * dz;
-        
-        // Spherical position in regular mesh.
-        float rad, theta, phi;
-        xyz2RadThetaPhi (rad, theta, phi, xLoc, yLoc, zLoc);
-        
-        // Check whether we're within the original bounds.
-        bool checkR = checkRadius (kern.radiusMinOrig, kern.radiusMaxOrig, rad);
-        bool checkT = checkTheta  (kern.thetaMinOrig, kern.thetaMaxOrig, theta);
-        bool checkP = checkPhi    (kern.phiMinOrig, kern.phiMaxOrig, phi);
-        
+           
         // Only go in here is we're within the bounds of the original kernel.
-        if (checkR && checkT && checkP) {
+        if (reg[index]) {
         
           // Loop over the x-axis.
           for (size_t ipass=0; ipass<nx; ipass++ ) {
@@ -156,11 +157,11 @@ void mesh::smoothMesh (kernel &kern) {
             // Parameters for 1D gaussian.
             float dist = x[i] - x[ipass];
             float dist2 = dist*dist;
-            float arg = (-1) * dist2 / (1*xVarSquare);
+            float arg = (-1) * dist2 / (2*xVarSquare);
             float shape = exp (arg);
           
             // Convolution along x-axis.
-            size_t axIndex = k + nz * (j + ipass * ny);
+            size_t axIndex  = k + nz * (j + ipass * ny);
             xSmooth[index] += shape * value[axIndex];
           
             // Store normalization factor.
@@ -172,6 +173,8 @@ void mesh::smoothMesh (kernel &kern) {
     }
   }
   
+  singlePrint ("Pass 2.");
+  
   // Smooth the smoothed x-array in the y-direction.
   for (size_t i=0; i<nx; i++) {
     for (size_t j=0; j<ny; j++) {
@@ -180,36 +183,22 @@ void mesh::smoothMesh (kernel &kern) {
         // Mesh index.
         size_t index = k + nz * (j + i * ny);
         
-        // Position in regular mesh.
-        float xLoc = kern.xMin + i * dx;
-        float yLoc = kern.yMin + j * dy;
-        float zLoc = kern.zMin + k * dz;
-        
-        // Spherical position in regular mesh.
-        float rad, theta, phi;
-        xyz2RadThetaPhi (rad, theta, phi, xLoc, yLoc, zLoc);
-        
-        // Check whether we're within the original bounds.
-        bool checkR = checkRadius (kern.radiusMinOrig, kern.radiusMaxOrig, rad);
-        bool checkT = checkTheta  (kern.thetaMinOrig, kern.thetaMaxOrig, theta);
-        bool checkP = checkPhi    (kern.phiMinOrig, kern.phiMaxOrig, phi);
-        
         // Only go in here is we're within the bounds of the original kernel.
-        if (checkR && checkT && checkP) {
-        
+        if (reg[index]) {
+
           // Loop over the y-axis.
           for (size_t jpass=0; jpass<ny; jpass++ ) {
           
             // Parameters for 1D gaussian.
             float dist = y[j] - y[jpass];
             float dist2 = dist*dist;
-            float arg = (-1) * dist2 / (1*yVarSquare);
+            float arg = (-1) * dist2 / (2*yVarSquare);
             float shape = exp (arg);
           
             // Convolution along y-axis.
             size_t axIndex = k + nz * (jpass + i * ny);
             ySmooth[index] += shape * xSmooth[axIndex];
-          
+            
             // Store normalization factor.
             normFactors[index] += shape;      
           
@@ -219,6 +208,8 @@ void mesh::smoothMesh (kernel &kern) {
     }
   }
   
+  singlePrint ("Pass 3.");
+  
   // Smooth the smooth x-y along the z-axis.
   for (size_t i=0; i<nx; i++) {
     for (size_t j=0; j<ny; j++) {
@@ -227,43 +218,39 @@ void mesh::smoothMesh (kernel &kern) {
         // Mesh index.
         size_t index = k + nz * (j + i * ny);
         
-        // Position in regular mesh.
-        float xLoc = kern.xMin + i * dx;
-        float yLoc = kern.yMin + j * dy;
-        float zLoc = kern.zMin + k * dz;
-        
-        // Spherical position in regular mesh.
-        float rad, theta, phi;
-        xyz2RadThetaPhi (rad, theta, phi, xLoc, yLoc, zLoc);
-        
-        // Check whether we're within the original bounds.
-        bool checkR = checkRadius (kern.radiusMinOrig, kern.radiusMaxOrig, rad);
-        bool checkT = checkTheta  (kern.thetaMinOrig, kern.thetaMaxOrig, theta);
-        bool checkP = checkPhi    (kern.phiMinOrig, kern.phiMaxOrig, phi);
-        
         // Only go in here is we're within the bounds of the original kernel.
-        if (checkR && checkT && checkP) {
+        if (reg[index]) {
         
           // Loop over the z-axis.
           for (size_t kpass=0; kpass<nz; kpass++ ) {
           
             // Parameters for 1D gaussian.
-            float dist = z[kpass] - z[kpass];
+            float dist = z[k] - z[kpass];
             float dist2 = dist*dist;
-            float arg = (-1) * dist2 / (1*zVarSquare);
+            float arg = (-1) * dist2 / (2*zVarSquare);
             float shape = exp (arg);
           
             // Convolution along y-axis.
-            size_t axIndex = kpass + nz * (j + i * ny);
-            smoothValue[index] += shape * ySmooth[axIndex];
+            size_t axIndex      = kpass + nz * (j + i * ny);
+            smoothValue[index] +=  shape * ySmooth[axIndex];
           
             // Store normalization factor.
-            normFactors[index] += shape;  
+            normFactors[index] += shape;
           
-          }                                    
+          }
         }        
       }
     }
   }
+  
+  MPI::COMM_WORLD.Barrier ();      
+  clock_t end = std::clock();
+  double elapsed = double (end - begin) / CLOCKS_PER_SEC;  
+  
+  if (myRank == 0)
+    std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
+  
+  if (myRank == 0)
+    writeExodus (smoothValue, x, y, z, nx, ny, nz, "smooth.ex2");
   
 }

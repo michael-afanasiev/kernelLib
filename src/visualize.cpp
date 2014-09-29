@@ -4,7 +4,7 @@
 void exodusErrorCheck (int, std::string);
 
 void writeExodus (float *regMeshArr, float *regX, float *regY, float *regZ, 
-                  int &nx, int &ny, int &nz)
+                  int &nx, int &ny, int &nz, std::string fName)
 {
 
   // Exodus parameters.
@@ -65,10 +65,10 @@ void writeExodus (float *regMeshArr, float *regX, float *regY, float *regZ,
     }
   }
 
-  std::cout << "Writing exodus file." << std::flush << std::endl;
+  // std::cout << "Writing exodus file." << std::flush << std::endl;
 
   // Interpolated array.
-  int idexo = ex_create ( "./testInterp.ex2", EX_CLOBBER, &comp_ws, &io_ws );
+  int idexo = ex_create ( fName.c_str(), EX_CLOBBER, &comp_ws, &io_ws );
   exodusErrorCheck ( ex_put_init( idexo, "Kernel", nDim, numNodes, numElem, nBlock, nNodeSet, 
     nSideSet ), "ex_put_init" );
   exodusErrorCheck ( ex_put_coord ( idexo, nodeCorX, nodeCorY, nodeCorZ ), "ex_put_coord" );
