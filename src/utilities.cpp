@@ -43,6 +43,9 @@ void xyz2RadThetaPhi (float &rad,  float &theta,  float &phi,
                       float &x,    float &y,      float &z) {
                         
   // Converts a point in cartesian coordiantes to spherical coordinates.
+                        
+  if (theta < 1)
+    theta = deg2rad (1);
                          
   rad = sqrt (x*x + y*y + z*z);
   theta = acos (z / rad);
@@ -164,4 +167,3 @@ float oneDimDist (float &xPoint, float &yPoint, float &zPoint,
   // return *std::min_element (d, d+3);
   
 }
-

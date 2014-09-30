@@ -96,6 +96,11 @@ private:
   float xCenter;
   float yCenter;
   float zCenter;
+
+  // These hold the unnormalized centers.
+  float xCenterPhys;
+  float yCenterPhys;
+  float zCenterPhys;
   
   // Spherical extremes (possibly rotated).
   float radiusMin, thetaMin, phiMin;
@@ -139,6 +144,9 @@ private:
   void resetRotations       ();
   void findNeighbours       ();
   void constructMaster      ();
+  
+  void quickSortCenter (int , int );
+  int pivot            (int &, int &, float &, float &);
     
 };
 

@@ -37,6 +37,7 @@ kernel::~kernel () {
   
 }
 
+
 void kernel::constructMaster () {
   
   // This function assembles a master chunk from the surrounding ones, and resets the kernel 
@@ -116,6 +117,9 @@ void kernel::constructMaster () {
   delete [] phi;
   delete [] theta;
   delete [] radius;
+  delete [] xStore;
+  delete [] yStore;
+  delete [] zStore;
   delete [] rawKernel;
   delete [] recvBufPhi;
   delete [] recvBufTheta;
@@ -123,11 +127,14 @@ void kernel::constructMaster () {
   delete [] recvBufRawKernel;
   
   // re-allocate the arrays that we're replacing with the new, expanded values.
-  radius    = new float [newNumGLLPoints];
-  theta     = new float [newNumGLLPoints];
   phi       = new float [newNumGLLPoints];
-  rawKernel = new float [newNumGLLPoints];
   inReg     = new bool  [newNumGLLPoints];
+  theta     = new float [newNumGLLPoints];
+  radius    = new float [newNumGLLPoints];
+  xStore    = new float [newNumGLLPoints];
+  yStore    = new float [newNumGLLPoints];
+  zStore    = new float [newNumGLLPoints];
+  rawKernel = new float [newNumGLLPoints];
   
   // Copy the scratch arrays into the original default arrays.
   for (size_t i=0; i<newNumGLLPoints; i++) {
@@ -233,217 +240,29 @@ void kernel::findNeighbours () {
     
 }
 
-void kernel::findSideSets () {
-  
-  // FIXME perhaps obsolete.
-  
-  // Find the sidesets of a mesh chunk -- that is the nodes close enough to an edge that might 
-  // require communicating.
-  
-  singlePrint ("\x1b[33mFinding side sets.\x1b[0m");
-  
-  findChunkDimensions ();  
-  rotateZaxis         ();
-  findChunkDimensions ();
-  rotateYaxis         ();
-  findChunkDimensions ();
-  
-  // Allocate sideSet array.
-  face1 = new bool [numGLLPoints]();
-  face2 = new bool [numGLLPoints]();
-  face3 = new bool [numGLLPoints]();
-  face4 = new bool [numGLLPoints]();
-  
-  // Re-usable vectors for edges of chunk (for face plane).  
-  std::vector<float> A, B, C;
-  A.resize (3);
-  B.resize (3);
-  C.resize (3);
-
-  // Normal face plane vectors.
-  std::vector <float> n1, n2, n3, n4;  
-  n1.resize (3);
-  n2.resize (3);
-  n3.resize (3);
-  n4.resize (3);
-  
-  // Save edges of chunks for use to define plane later.
-  std::vector<float> p1, p2, p3, p4;
-  p1.resize (3);
-  p2.resize (3);
-  p3.resize (3);
-  p4.resize (3);
-  
-  // Face 1.
-  A[0] = xMax; A[1] = yMin; A[2] = zMax;
-  B[0] = xMin; B[1] = yMin; B[2] = zMax;
-  C[0] = xMax; C[1] = yMin; C[2] = zMin;
-  n1 = getNormalVector (A, B, C);
-  p1 = A;
-
-  // Face 2.
-  A[0] = xMax; A[1] = yMax; A[2] = zMax;
-  B[0] = xMax; B[1] = yMin; B[2] = zMax;
-  C[0] = xMax; C[1] = yMax; C[2] = zMin;
-  n2 = getNormalVector (A, B, C);
-  p2 = A;
-
-  // Face 3.
-  A[0] = xMin; A[1] = yMax; A[2] = zMax;
-  B[0] = xMax; B[1] = yMax; B[2] = zMax;
-  C[0] = xMin; C[1] = yMax; C[2] = zMin;  
-  n3 = getNormalVector (A, B, C);
-  p3 = A;
-
-  // Face 4.
-  A[0] = xMin; A[1] = yMin; A[2] = zMax;
-  B[0] = xMin; B[1] = yMax; B[2] = zMax;
-  C[0] = xMin; C[1] = yMin; C[2] = zMin;
-  n4 = getNormalVector (A, B, C);
-  p4 = A;
-  
-  // Setup vector to test all GLL points -- face distance.
-  std::vector<float> xTest;
-  xTest.resize (3);
-  
-  // Loop over all points.
-  int face1Count=0;
-  int face2Count=0;
-  int face3Count=0;
-  int face4Count=0;
-  for (size_t i=0; i<numGLLPoints; i++) {
-    
-    xTest[0] = xStore[i];
-    xTest[1] = yStore[i];
-    xTest[2] = zStore[i];
-    
-    // Take dot product with face plane to get distance. Expand to physical dimensions.
-    float dFace1 = abs (projWonV_Dist (xTest, n1, p1) * R_EARTH);
-    float dFace2 = abs (projWonV_Dist (xTest, n2, p2) * R_EARTH);
-    float dFace3 = abs (projWonV_Dist (xTest, n3, p3) * R_EARTH);
-    float dFace4 = abs (projWonV_Dist (xTest, n4, p4) * R_EARTH);    
-    
-    if (dFace1 < dHaze)
-      face1[i] = true;
-    
-    if (dFace2 < dHaze)
-      face2[i] = true;
-    
-    if (dFace3 < dHaze)
-      face3[i] = true;
-    
-    if (dFace4 < dHaze)
-      face4[i] = true;
-    
-  }
-  
-}
-
-void kernel::exploreGaussianHaze () {
-  
-  // FIXME Perhaps obsolete
-  
-  // Uses the side sets found in getSideSets and copies to each processor some of the neighboring
-  // chunk that might be needed in the gaussian smoother.
-  
-  // MPI variables.
-  int myRank    = MPI::COMM_WORLD.Get_rank ();
-  int worldSize = MPI::COMM_WORLD.Get_size ();
-  
-  // Buffer to transfer the side sets. TODO might also transfer ibool haze array, might not.
-  float *xStoreBuffer = new float [numGLLPoints];
-  float *yStoreBuffer = new float [numGLLPoints];
-  float *zStoreBuffer = new float [numGLLPoints];
-  bool *sideSetBuffer = new bool [numGLLPoints];
-  
-  singlePrint ("\x1b[33mExploring Gaussian Haze.\x1b[0m");
-  
-  // Loop over all processors. This could be avoided if some way was invented to tell which of those
-  // were just too far away. Will have to see how fast this is.
-  clock_t begin = std::clock ();
-  for (size_t i=0; i<worldSize; i++) {
-        
-    if (i == myRank) {
-      
-      // Throw the current processor's coordStores to all others.
-      xStoreBuffer = xStore;    
-      yStoreBuffer = yStore;
-      zStoreBuffer = zStore;
-      
-    }
-                    
-    // coordinate store broadcast.
-    MPI::COMM_WORLD.Bcast (&xStoreBuffer[0],  numGLLPoints, MPI::FLOAT, i);
-    MPI::COMM_WORLD.Bcast (&yStoreBuffer[0],  numGLLPoints, MPI::FLOAT, i);
-    MPI::COMM_WORLD.Bcast (&zStoreBuffer[0],  numGLLPoints, MPI::FLOAT, i);
-    MPI::COMM_WORLD.Bcast (&sideSetBuffer[0], numGLLPoints, MPI::BOOL,  i);
-    
-    // Once these are broadcast, work through all interesting points and see if they should be
-    // included in the gaussian haze. LOCAL ARRAY. TODO.
-    for (size_t j=0; j<numGLLPoints; j++) {
-      
-      // if (sideSet[j] == false)
-        // continue;
-
-      float xLoc = xStore[j];
-      float yLoc = yStore[j];
-      float zLoc = zStore[j];
-            
-      // Work through all interesting points of REMOTE ARRAY. TODO might only need to broadcast
-      // the hazes in the first place. Like or with a bool array that only picks out of the hazes
-      // of both chunks and compares the distances. Yes i think that should work.
-      for (size_t k=0; k<numGLLPoints; k++) {
-        
-        // if (sideSet[k] == false)
-          // continue;
-          
-        float xRem = xStoreBuffer[k];
-        float yRem = yStoreBuffer[k];
-        float zRem = zStoreBuffer[k];
-
-        float distance = oneDimDist (xLoc, yLoc, zLoc, xRem, yRem, zRem);
-        
-      }
-            
-    }
-    cout << i << endl;
-
-        
-  }
-  
-  clock_t end = std::clock();
-  double elapsed = double (end - begin) / CLOCKS_PER_SEC;  
-  
-  delete [] xStoreBuffer;
-  delete [] yStoreBuffer;
-  delete [] zStoreBuffer;
-  delete [] sideSetBuffer;
-  
-  if (myRank == 0)
-    std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
-    
-}
-
 void kernel::createKDTree () {
   
   // Create kdTree of the kernel.
   
   int myRank = MPI::COMM_WORLD.Get_rank ();
-  
-  singlePrint  ("\n\x1b[33mCreating KD-tree. ");
-  clock_t begin = std::clock ();  
+    
+  singlePrint ("\n\x1b[33mCreating KD-tree. ");
+  double begin = std::clock ();  
   
   // Initialize tree.
   tree = kd_create (3);
   
   // Initialize the data array.
-  KDdat = new int [numGLLPoints];
+  KDdat = new int [numGLLPoints];  
   
   // Local xyz values. May not be appropriate.
   float x, y, z;
   for (size_t i=0; i<numGLLPoints; i++) {
-    
-    radThetaPhi2xyz (radius[i], theta[i], phi[i], x, y, z);
+
+    x = xStore[i];
+    y = yStore[i];
+    z = zStore[i];
+    // radThetaPhi2xyz (radius[i], theta[i], phi[i], x, y, z);
     KDdat[i] = i;
     kd_insert3 (tree, x, y, z, &KDdat[i]);
     
@@ -614,6 +433,9 @@ void kernel::findChunkDimensions () {
     if (z > zMax)
       zMax = z;        
     
+    if (z < zMin)
+      zMin = z;
+    
     // Sum radius for average rad.
     rSum += radius[i];
     
@@ -622,18 +444,22 @@ void kernel::findChunkDimensions () {
     ySum += y;
     zSum += z;
     
+    
   }
     
   // Calculate magnitude and normalize.
-  xCenter         = xSum / numGLLPoints;
-  yCenter         = ySum / numGLLPoints;
-  zCenter         = zSum / numGLLPoints;
+  xCenterPhys  = xSum / numGLLPoints;
+  yCenterPhys  = ySum / numGLLPoints;
+  zCenterPhys  = zSum / numGLLPoints;
     
-  float magnitude = sqrt (xCenter*xCenter + yCenter*yCenter + zCenter*zCenter);
-  xCenter         = xCenter / magnitude;
-  yCenter         = yCenter / magnitude;
-  zCenter         = zCenter / magnitude;
-    
+  float magnitude = sqrt (xCenterPhys*xCenterPhys + yCenterPhys*yCenterPhys + 
+    zCenterPhys*zCenterPhys);
+  
+  xCenter         = xCenterPhys / magnitude;
+  yCenter         = yCenterPhys / magnitude;
+  zCenter         = zCenterPhys / magnitude;
+  
+      
   // Return center point.
   xyz2RadThetaPhi (radCenter, thetaCenter, phiCenter, xCenter, yCenter, zCenter);
   
@@ -817,4 +643,54 @@ void kernel::openKernelNetcdf () {
     
   }
     
+}
+
+void kernel::quickSortCenter (int i1st, int i2nd) {
+  
+  int pivotElement;
+  
+  float d1st = distFromPoint (xStore[i1st], yStore[i1st], zStore[i1st], xCenterPhys, yCenterPhys, 
+    zCenterPhys);
+    
+  float d2nd = distFromPoint (xStore[i2nd], yStore[i2nd], zStore[i2nd], xCenterPhys, yCenterPhys, 
+    zCenterPhys);
+  
+  if (i1st < i2nd) {
+    pivotElement = pivot (i1st, i2nd, d1st, d2nd);
+    quickSortCenter (i1st, pivotElement-1);
+    quickSortCenter (pivotElement+1, i2nd);
+  }
+  
+}
+
+int kernel::pivot (int &i1st, int &i2nd, float &d1st, float &d2nd) {
+              
+  int p              = i1st;
+  float pivotElement = d1st;
+  
+  for (int i=i1st+1; i<=i2nd; i++) {
+    
+    float dTest = distFromPoint (xStore[i], yStore[i], zStore[i], 
+      xCenterPhys, yCenterPhys, zCenterPhys);
+      
+    if (dTest <= pivotElement) {
+      
+      p++;
+      std::swap (inReg[i],     inReg[p]);
+      std::swap (xStore[i],    xStore[p]);
+      std::swap (yStore[i],    yStore[p]);
+      std::swap (zStore[i],    zStore[p]);
+      std::swap (rawKernel[i], rawKernel[p]);
+      
+    }
+  }
+  
+  std::swap (inReg[p],     inReg[i1st]);
+  std::swap (xStore[p],    xStore[i1st]);
+  std::swap (yStore[p],    yStore[i1st]);
+  std::swap (zStore[p],    zStore[i1st]);
+  std::swap (rawKernel[p], rawKernel[i1st]);
+  
+  return p;
+  
 }

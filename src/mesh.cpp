@@ -18,7 +18,7 @@ void mesh::createMesh (kernel &kern) {
   // Determine the discritization in each direction. TODO make variables.
   dx = 100 / R_EARTH;
   dy = 100 / R_EARTH;
-  dz = 100 / R_EARTH;
+  dz = 10 / R_EARTH;
   
   // Determines the number of points in each direction.
   nx = int (((kern.xMax + dx - (kern.xMin - dx)) / dx) + 1);
@@ -65,7 +65,7 @@ void mesh::createMesh (kernel &kern) {
         bool checkP = checkPhi    (kern.phiMin, kern.phiMax, phi);
         
         // Initialize interpolation values. 0 if we're outside (should already be 0).
-        // Calculate index stride as well. TODO within may be unused...
+        // Calculate index stride as well.
         bool within = false;
         float data  = 0.;
         int index   = k + j * nz + i * (nz * ny);
@@ -93,17 +93,18 @@ void mesh::createMesh (kernel &kern) {
     }    
   }   
 
-  // Here we can play with the interpolated kernels (for debugging).
-  // for (size_t i=0; i<gridSize; i++) {
-  //     value[i] = 100;
-  //   }
+  // Here we can play with the intmerpolated kernels (for debugging).
+  for (size_t i=0; i<gridSize; i++) {
+      value[i] = 0.;
+    }
+
+  for (size_t i=0; i<gridSize; i++) {
+    if (reg[i]) {
+      value[i] = 1.;
+      break;
+    }
+  }
   //
-  // for (size_t i=0; i<gridSize; i++) {
-  //   if (reg[i]) {
-  //     value[i] = 0.;
-  //   }
-  // }
-   
   // Report aww yeah. 
   MPI::COMM_WORLD.Barrier ();      
   clock_t end = std::clock();
@@ -111,7 +112,7 @@ void mesh::createMesh (kernel &kern) {
   if (myRank == 0)
     std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
   
-  if (myRank == 1)
+  if (myRank == 0)
     writeExodus (value, x, y, z, nx, ny, nz, "unSmoothed.ex2");
   
 }
@@ -139,15 +140,14 @@ void mesh::smoothMesh (kernel &kern) {
   // Time.
   clock_t begin = std::clock();
   
-  singlePrint ("\n\x1b[33mSmoothing.\x1b[035m\nPass 1.");
-  
+  singlePrint ("\n\x1b[33mSmoothing.\x1b[035m\nPass 1.");  
   for (size_t i=0; i<nx; i++) {
     for (size_t j=0; j<ny; j++) {
       for (size_t k=0; k<nz; k++) {
         
         // Mesh index.
         size_t index = k + nz * (j + i * ny);
-           
+
         // Only go in here is we're within the bounds of the original kernel.
         if (reg[index]) {
         
@@ -173,16 +173,15 @@ void mesh::smoothMesh (kernel &kern) {
     }
   }
   
-  singlePrint ("Pass 2.");
-  
+  singlePrint ("Pass 2.");  
   // Smooth the smoothed x-array in the y-direction.
   for (size_t i=0; i<nx; i++) {
     for (size_t j=0; j<ny; j++) {
       for (size_t k=0; k<nz; k++) {
         
         // Mesh index.
-        size_t index = k + nz * (j + i * ny);
-        
+        size_t index = k + nz * (j + i * ny);     
+                        
         // Only go in here is we're within the bounds of the original kernel.
         if (reg[index]) {
 
@@ -208,8 +207,7 @@ void mesh::smoothMesh (kernel &kern) {
     }
   }
   
-  singlePrint ("Pass 3.");
-  
+  singlePrint ("Pass 3.");  
   // Smooth the smooth x-y along the z-axis.
   for (size_t i=0; i<nx; i++) {
     for (size_t j=0; j<ny; j++) {
@@ -217,7 +215,7 @@ void mesh::smoothMesh (kernel &kern) {
         
         // Mesh index.
         size_t index = k + nz * (j + i * ny);
-        
+
         // Only go in here is we're within the bounds of the original kernel.
         if (reg[index]) {
         
@@ -238,6 +236,8 @@ void mesh::smoothMesh (kernel &kern) {
             normFactors[index] += shape;
           
           }
+                    
+          // smoothValue[index] = smoothValue[index] / normFactors[index];
         }        
       }
     }
@@ -250,7 +250,22 @@ void mesh::smoothMesh (kernel &kern) {
   if (myRank == 0)
     std::cout << "\x1b[32mDone.\x1b[0m (" << elapsed << " seconds)\n";
   
+  float valueSum = 0.;
+  for (size_t i=0; i<gridSize; i++) {
+    if (reg[i]) {
+    valueSum += smoothValue[i];
+    // smoothValue[i] = normFactors[i];  
+  }
+  }
+  
+  if (myRank==0) {
+    cout << "value sum: " << valueSum << endl;
+    cout << "max value: " << *std::max_element (smoothValue, smoothValue+gridSize) << endl;
+  }
+  
   if (myRank == 0)
     writeExodus (smoothValue, x, y, z, nx, ny, nz, "smooth.ex2");
+  
+
   
 }
